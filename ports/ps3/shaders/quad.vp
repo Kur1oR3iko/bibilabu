@@ -1,0 +1,5 @@
+!!VP2.0
+MOV o[HPOS], v[0];
+MOV o[TEX0], v[8];
+MOV o[COL0], v[3];
+END

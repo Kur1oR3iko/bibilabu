@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<defs><linearGradient id="glass" x2="0" y2="1"><stop stop-color="#2b3037"/><stop offset="1" stop-color="#090b0f"/></linearGradient>
+<linearGradient id="silver" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#8f99a5"/></linearGradient></defs>
+<rect x="40" y="40" width="432" height="432" rx="90" fill="url(#glass)" stroke="#828a95"/>
+<path d="M166 126 H258 C321 126 346 151 346 195 C346 223 332 246 306 255 C340 265 359 291 359 324 C359 369 324 394 264 394 H166 Z M225 166 L286 198 L225 231 Z M225 283 L292 321 L225 358 Z" fill="url(#silver)" fill-rule="evenodd"/></svg>
