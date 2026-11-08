@@ -31,7 +31,7 @@ python3 tools/bootstrap_software_avc.py --host
 python3 tools/build_platform_probe.py --bili-play --release
 ```
 
-正式构建生成 `dist/bibilabu-PS3-1.0.0-fw3.55.pkg`。包内声明的最低系统版本为 3.55；该设置可让 4.89 等旧系统尝试安装，不能代替旧系统实机运行验证。软件解码依赖来自 FFmpeg 7.1.1，下载脚本会校验 SHA-256。依赖和许可见 [UPSTREAM.json](UPSTREAM.json)。
+正式构建生成 `dist/bibilabu-PS3-1.0.0-fw3.55.pkg`。包内声明的最低系统版本为 3.55；该设置只改变安装门槛，不能代替旧系统实机验证。已有一台 4.89 HEN 主机安装时报 8001002C 并重启；试验包已从公开 Release 暂时撤下，原因仍在排查。软件解码依赖来自 FFmpeg 7.1.1，下载脚本会校验 SHA-256。依赖和许可见 [UPSTREAM.json](UPSTREAM.json)。
 
 ## 本地数据
 
