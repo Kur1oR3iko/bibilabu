@@ -2,7 +2,7 @@
 #include "stream_policy.hpp"
 #include <limits>
 
-namespace wiliwili::ps3 {
+namespace bibilabu::ps3 {
 bool safe_media_url(const std::string& url) {
     const std::size_t start = url.compare(0, 8, "https://") == 0 ? 8 :
                               url.compare(0, 7, "http://") == 0 ? 7 : 0;
@@ -70,4 +70,4 @@ Selection select_dash_streams(const std::vector<Stream>& video,
     if (result.audio_index < 0 && limits.require_audio) result.error = SelectionError::no_compatible_audio;
     return result;
 }
-} // namespace wiliwili::ps3
+} // namespace bibilabu::ps3

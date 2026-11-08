@@ -188,16 +188,18 @@ def main():
     parser.add_argument('--network',action='store_true',help='Use configured LAN HTTP/HTTPS Range sources')
     parser.add_argument('--bili',action='store_true',help='Public HTTPS, Bilibili metadata/WBI/playurl/CDN probe page')
     parser.add_argument('--bili-play',action='store_true',help='Real Bilibili DASH native playback test')
+    parser.add_argument('--release',action='store_true',help='Build the public bibilabu 1.0.0 package identity')
     parser.add_argument('--release-only',action='store_true',help='Build and package without running test suites')
     args=parser.parse_args()
+    if args.release and not args.bili_play:parser.error('--release requires --bili-play')
     if args.bili_play:
-        # 1.0 implies network+video but must never define WILI_API_TEST.
+        # The native client implies network+video without enabling API probe mode.
         args.network=True
         args.video=True
         args.bili=False
     if args.bili:args.network=True
     if args.network:args.video=True
-    version='1.0.0-r5' if args.bili_play else '0.9' if args.bili else '0.8' if args.network else '0.7.1' if args.video else VERSION
+    version=('1.0.0' if args.release else '1.0.0-r5') if args.bili_play else '0.9' if args.bili else '0.8' if args.network else '0.7.1' if args.video else VERSION
     kind='bili-play' if args.bili_play else 'api' if args.bili else 'network' if args.network else 'video' if args.video else 'platform'
     sdk=Path(os.environ.get('PS3DEV','/opt/wiliwili-ps3/ps3dev'))
     software_sdk=sdk.parent/'ffmpeg-ppu-7.1.1'
@@ -221,7 +223,7 @@ def main():
         run([pcm_test],env)
     if args.bili_play and not args.release_only:
             # 1.0 host regressions run before the PPU build; fixtures and test paths
-            # are relative to ports/ps3, so cwd must be PORT.
+            # are relative to the standalone PS3 project root, so cwd must be PORT.
             # check_http_range.py still exercises the shared Range client against the
             # local fixture; generate it on a clean tree without changing playback.
             if not all((PORT/'build/media'/f).exists() for f in ['WILI_VIDEO.MP4','WILI_AUDIO.MP4']):
@@ -361,16 +363,16 @@ def main():
         if args.video:run([sys.executable,PORT/'tests/test_audio_imports.py'],env)
     run([sdk/'bin/make_self_npdrm',patched,stage/'USRDIR/EBOOT.BIN',CONTENT_ID],env)
     xml=ET.parse(sdk/'bin/sfo.xml')
-    values={'TITLE':'wiliwili PS3 Platform Test 0.3.3','TITLE_ID':ID,'APP_VER':'00.33','PS3_SYSTEM_VER':'04.9300','PARENTAL_LEVEL':'1'}
-    if args.video:values.update(TITLE='wiliwili PS3 Stream Test 0.7.1',APP_VER='00.71')
-    if args.network:values.update(TITLE='wiliwili PS3 Network Test 0.8',APP_VER='00.80')
-    if args.bili:values.update(TITLE='wiliwili PS3 API Test 0.9',APP_VER='00.90')
-    if args.bili_play:values.update(TITLE='bibilabu PS3 1.0.0-r5',APP_VER='01.00')
+    values={'TITLE':'bibilabu PS3 Platform Test 0.3.3','TITLE_ID':ID,'APP_VER':'00.33','PS3_SYSTEM_VER':'04.9300','PARENTAL_LEVEL':'1'}
+    if args.video:values.update(TITLE='bibilabu PS3 Stream Test 0.7.1',APP_VER='00.71')
+    if args.network:values.update(TITLE='bibilabu PS3 Network Test 0.8',APP_VER='00.80')
+    if args.bili:values.update(TITLE='bibilabu PS3 API Test 0.9',APP_VER='00.90')
+    if args.bili_play:values.update(TITLE='bibilabu PS3 1.0.0' if args.release else 'bibilabu PS3 1.0.0-r5',APP_VER='01.00')
     for value in xml.getroot().findall('value'):
         if value.get('name')in values:value.text=values[value.get('name')]
     xml_path=build/'PARAM.SFO.xml';xml.write(xml_path,encoding='utf-8',xml_declaration=True)
     run([sdk/'bin/sfo','-f',xml_path,stage/'PARAM.SFO'],env)
-    shutil.copyfile(PORT/'assets/ICON0.PNG' if args.bili_play else PORT/'assets/ICON0.PNG',stage/'ICON0.PNG')
+    shutil.copyfile(PORT/'assets/ICON0.PNG',stage/'ICON0.PNG')
     if args.video:
         licenses=stage/'USRDIR/licenses';licenses.mkdir(exist_ok=True)
         shutil.copyfile(PORT/'third_party/psl1ght-imports/LICENSE',licenses/'PSL1GHT-imports.txt')
@@ -383,7 +385,7 @@ def main():
         for license_file in (PORT/'third_party/network-licenses').glob('*.txt'):
             shutil.copyfile(license_file,stage/'USRDIR/licenses'/license_file.name)
         shutil.copyfile('/usr/share/doc/ca-certificates/copyright',stage/'USRDIR/licenses/ca-certificates.txt')
-    debug=build/'platform.debug.pkg';package=dist/f'bibilabu-PS3-test-{version}.pkg' if args.bili_play else dist/f'wiliwili-PS3-{kind}-test-{version}.pkg'
+    debug=build/'platform.debug.pkg';package=dist/(f'bibilabu-PS3-{version}.pkg' if args.release else f'bibilabu-PS3-test-{version}.pkg') if args.bili_play else dist/f'bibilabu-PS3-{kind}-test-{version}.pkg'
     run([sdk/'bin/pkg','--contentid='+CONTENT_ID,stage,debug],env)
     unpack=Path(tempfile.mkdtemp(prefix='verify-',dir=build))
     p=subprocess.run([str(sdk/'bin/pkg'),'-x',str(debug)],env=env,cwd=unpack,capture_output=True,text=True,check=True)
@@ -433,7 +435,7 @@ def main():
             report.pop(field,None)
         report.update(default_bvid='BV17x411w7KC',requested_qn=32,network='LAN_HTTP_PREVIOUSLY_PASSED_PUBLIC_HTTPS_PENDING')
     if args.bili_play:
-        report.update(artifact='bibilabu PS3 native client 1.0.0-r5',
+        report.update(artifact='bibilabu PS3 native client '+version,
                       ps3_hardware_tested=False,borealis_ported=False,
                       display='Native RSX YUV420 textured quads + premultiplied Aero UI; cached XMB browsing surface',
                       quality='360p/480p/720p AVC; 1080p hidden from UI and excluded from playurl requests and selection',
@@ -473,26 +475,26 @@ def main():
                       chinese_input='Explicit simplified/traditional Chinese and English OSK panels; UTF16/UTF8 conversion; search and comment editing',
                       TLS='CA/hostname verification enabled',callback_static_check=callback,
                       audio_callback_checks=audio_callbacks,adec_import_table=adec_imports,vdec_import_table=vdec_imports)
+    if args.release:report.update(distribution='public release v1.0.0',package_identity='bibilabu PS3 1.0.0')
     if args.release_only:report['host_tests']='SKIPPED_IN_THIS_BUILD_MODE; separately executed checks are recorded in build/evidence'
     manifest=dist/f'{kind}-test-manifest.json'
     manifest.write_text(json.dumps(report,indent=2)+'\n')
-    doc='NATIVE_100R5_TEST.md' if args.bili_play else 'API_TEST.md' if args.bili else 'NETWORK_TEST.md' if args.network else 'VIDEO_TEST.md' if args.video else 'PLATFORM_TEST.md'
-    doc_present=(PORT/doc).exists()
-    if doc_present or not args.bili_play:
-        shutil.copyfile(PORT/doc,dist/doc)  # existing modes fail closed on a missing doc
-    else:
-        print('WARNING: '+str(PORT/doc)+' not found; skipping doc copy',flush=True)
-    shutil.copyfile(PORT/'STARTUP_FIX.md',dist/'STARTUP_FIX.md')
+    doc=None if args.release or args.bili_play else 'API_TEST.md' if args.bili else 'NETWORK_TEST.md' if args.network else 'VIDEO_TEST.md' if args.video else 'PLATFORM_TEST.md'
+    doc_present=bool(doc and (PORT/doc).exists())
+    if doc_present:shutil.copyfile(PORT/doc,dist/doc)
+    startup_doc=PORT/'STARTUP_FIX.md'
+    if not args.release and startup_doc.exists():shutil.copyfile(startup_doc,dist/startup_doc.name)
     sums=dist/('VIDEO_SHA256SUMS.txt' if args.video else 'PLATFORM_SHA256SUMS.txt')
     sums.write_text(report['sha256']+'  '+package.name+'\n')
-    bundle=dist/f'bibilabu-PS3-test-{version}-USB.zip' if args.bili_play else dist/f'wiliwili-PS3-{kind}-test-{version}-USB.zip'
+    bundle=dist/(f'bibilabu-PS3-{version}-USB.zip' if args.release else f'bibilabu-PS3-test-{version}-USB.zip') if args.bili_play else dist/f'bibilabu-PS3-{kind}-test-{version}-USB.zip'
     files=[package,manifest]
-    if args.bili_play and (PORT/'DANMAKU_1080_RESEARCH.md').exists():
+    if args.bili_play and not args.release and (PORT/'DANMAKU_1080_RESEARCH.md').exists():
         shutil.copyfile(PORT/'DANMAKU_1080_RESEARCH.md',dist/'DANMAKU_1080_RESEARCH.md');files.append(dist/'DANMAKU_1080_RESEARCH.md')
-    if args.bili_play and (PORT/'YUV_AERO_DESIGN.md').exists():
+    if args.bili_play and not args.release and (PORT/'YUV_AERO_DESIGN.md').exists():
         shutil.copyfile(PORT/'YUV_AERO_DESIGN.md',dist/'YUV_AERO_DESIGN.md');files.append(dist/'YUV_AERO_DESIGN.md')
     if doc_present:files.append(dist/doc)
-    files += [dist/'STARTUP_FIX.md',sums]
+    if not args.release and startup_doc.exists():files.append(dist/startup_doc.name)
+    files.append(sums)
     if args.video and not args.bili and not args.bili_play:
         shutil.copyfile(PORT/'build/media/WILI_VIDEO.MP4',dist/'WILI_VIDEO.MP4')
         shutil.copyfile(PORT/'build/media/WILI_AUDIO.MP4',dist/'WILI_AUDIO.MP4')

@@ -2,7 +2,7 @@
 #include "stream_policy.hpp"
 #include <iostream>
 #include <stdexcept>
-using namespace wiliwili::ps3;
+using namespace bibilabu::ps3;
 static void check(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
 }

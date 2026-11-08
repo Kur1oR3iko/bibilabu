@@ -23,7 +23,7 @@
     "license": "LGPL-2.1-or-later",
     "build": "tools/bootstrap_software_avc.py",
     "patch": "H264_SEI object list includes aom_film_grain.o",
-    "role": "PPU/AltiVec H.264 fallback for rejected portrait streams; r4 hardware displayed frames with stutter; r5 scheduling improvement pending hardware confirmation"
+    "role": "PPU/AltiVec fallback for portrait AVC streams refused by VDEC; r4 displayed frames with stutter, r5 still has minor lag"
   },
   "font_asset": {
     "file": "assets/switch_font.ttf",

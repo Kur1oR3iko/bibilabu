@@ -70,7 +70,7 @@ def main():
     run([sdk/'bin/make_self_npdrm',elf,stage/'USRDIR/EBOOT.BIN',CONTENT_ID],env)
     # Use the SDK's SFO writer with explicit build identity and target version.
     xml=ET.parse(sdk/'bin/sfo.xml')
-    values={'TITLE':'wiliwili PS3 Boot Probe','TITLE_ID':ID,'APP_VER':'00.20',
+    values={'TITLE':'bibilabu PS3 Boot Probe','TITLE_ID':ID,'APP_VER':'00.20',
             'PS3_SYSTEM_VER':'04.9300','PARENTAL_LEVEL':'1'}
     for value in xml.getroot().findall('value'):
         if value.get('name') in values:value.text=values[value.get('name')]
@@ -81,7 +81,7 @@ def main():
     if width>320 or height>176:raise RuntimeError('Icon dimensions exceed PS3 limits')
     shutil.copyfile(icon,stage/'ICON0.PNG')
     debug_pkg=build/'probe.debug.pkg'
-    package=dist/('wiliwili-PS3-boot-probe-'+VERSION+'.pkg')
+    package=dist/('bibilabu-PS3-boot-probe-'+VERSION+'.pkg')
     run([sdk/'bin/pkg','--contentid='+CONTENT_ID,stage,debug_pkg],env)
     shutil.copyfile(debug_pkg,package)
     run([sdk/'bin/package_finalize',package],env)
@@ -95,7 +95,7 @@ def main():
     (dist/'boot-probe-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     (dist/'SHA256SUMS.txt').write_text(manifest['sha256']+'  '+package.name+'\n')
     shutil.copyfile(PORT/'BOOT_TEST.md',dist/'BOOT_TEST.md')
-    bundle=dist/('wiliwili-PS3-boot-probe-'+VERSION+'-USB.zip')
+    bundle=dist/('bibilabu-PS3-boot-probe-'+VERSION+'-USB.zip')
     with zipfile.ZipFile(bundle,'w',zipfile.ZIP_DEFLATED) as z:
         for p in [package,dist/'BOOT_TEST.md',dist/'SHA256SUMS.txt',dist/'boot-probe-manifest.json']:
             z.write(p,p.name)

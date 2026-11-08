@@ -1,17 +1,18 @@
-# Local build products
-/ports/ps3/.reference/
-/ports/ps3/build/
-/ports/ps3/dist/
-/ports/ps3/evidence/*
-!/ports/ps3/evidence/README.md
-/ports/ps3/**/__pycache__/
+# Local builds and downloaded source caches
+/.reference/
+/build/
+/dist/
+/evidence/*
+!/evidence/README.md
+/**/__pycache__/
 *.py[cod]
 *.pkg
 *.zip
 *.log
 *.LOG
-/ports/ps3/test_stb.c
-/ports/ps3/wiliwili_config.json*
-/ports/ps3/bibilabu_settings.cfg*
+/test_stb.c
+/wiliwili_config.json*
+/bibilabu_settings.cfg*
+/ports/
 /.workbuddy-ai/
 /PS3-before-*.zip

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace wiliwili::ps3 {
+namespace bibilabu::ps3 {
 
 // Metadata from wiliwili's DASH response. Hardware configuration must still
 // inspect the actual AVC SPS; display width/height are not coded dimensions.
@@ -40,4 +40,4 @@ bool safe_media_url(const std::string& url);
 Selection select_dash_streams(const std::vector<Stream>& video,
                               const std::vector<Stream>& audio,
                               const Limits& limits = {});
-} // namespace wiliwili::ps3
+} // namespace bibilabu::ps3
