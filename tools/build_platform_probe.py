@@ -17,6 +17,7 @@ from build_boot_probe import PORT, CONTENT_ID, ID, run, elf_segments
 from check_boot_exit import trace_entry
 
 VERSION = '0.3.3'
+MIN_PS3_SYSTEM_VERSION = '03.5500'
 
 
 def instrument_constructors(path, syms):
@@ -363,7 +364,7 @@ def main():
         if args.video:run([sys.executable,PORT/'tests/test_audio_imports.py'],env)
     run([sdk/'bin/make_self_npdrm',patched,stage/'USRDIR/EBOOT.BIN',CONTENT_ID],env)
     xml=ET.parse(sdk/'bin/sfo.xml')
-    values={'TITLE':'bibilabu PS3 Platform Test 0.3.3','TITLE_ID':ID,'APP_VER':'00.33','PS3_SYSTEM_VER':'04.9300','PARENTAL_LEVEL':'1'}
+    values={'TITLE':'bibilabu PS3 Platform Test 0.3.3','TITLE_ID':ID,'APP_VER':'00.33','PS3_SYSTEM_VER':MIN_PS3_SYSTEM_VERSION,'PARENTAL_LEVEL':'1'}
     if args.video:values.update(TITLE='bibilabu PS3 Stream Test 0.7.1',APP_VER='00.71')
     if args.network:values.update(TITLE='bibilabu PS3 Network Test 0.8',APP_VER='00.80')
     if args.bili:values.update(TITLE='bibilabu PS3 API Test 0.9',APP_VER='00.90')
@@ -385,7 +386,7 @@ def main():
         for license_file in (PORT/'third_party/network-licenses').glob('*.txt'):
             shutil.copyfile(license_file,stage/'USRDIR/licenses'/license_file.name)
         shutil.copyfile('/usr/share/doc/ca-certificates/copyright',stage/'USRDIR/licenses/ca-certificates.txt')
-    debug=build/'platform.debug.pkg';package=dist/(f'bibilabu-PS3-{version}.pkg' if args.release else f'bibilabu-PS3-test-{version}.pkg') if args.bili_play else dist/f'bibilabu-PS3-{kind}-test-{version}.pkg'
+    debug=build/'platform.debug.pkg';package=dist/(f'bibilabu-PS3-{version}-fw3.55.pkg' if args.release else f'bibilabu-PS3-test-{version}.pkg') if args.bili_play else dist/f'bibilabu-PS3-{kind}-test-{version}.pkg'
     run([sdk/'bin/pkg','--contentid='+CONTENT_ID,stage,debug],env)
     unpack=Path(tempfile.mkdtemp(prefix='verify-',dir=build))
     p=subprocess.run([str(sdk/'bin/pkg'),'-x',str(debug)],env=env,cwd=unpack,capture_output=True,text=True,check=True)
@@ -402,7 +403,7 @@ def main():
     run([sdk/'bin/package_finalize',package],env)
     output=package.read_bytes()
     if output[:8]!=b'\x7fPKG\x80\0\0\x01' or struct.unpack_from('>Q',output,24)[0]!=len(output):raise RuntimeError('Invalid package header')
-    report={'version':version,'artifact':'bounded split-fMP4 native H.264/AAC streaming test' if args.video else 'pre-CRT trace and display-input test only','ps3_hardware_tested':False,
+    report={'version':version,'minimum_ps3_system_version':MIN_PS3_SYSTEM_VERSION,'artifact':'bounded split-fMP4 native H.264/AAC streaming test' if args.video else 'pre-CRT trace and display-input test only','ps3_hardware_tested':False,
             'entry_descriptor':entry,'pre_crt_trace_undefined_symbols':early_undefined,
             'constructor_tracing':constructors,'constructor_order_unchanged':False,
             'sdk_constructor_order':['sbrk_init','__syscalls_init','__glob_file_init','init_metalock'],
@@ -486,7 +487,7 @@ def main():
     if not args.release and startup_doc.exists():shutil.copyfile(startup_doc,dist/startup_doc.name)
     sums=dist/('VIDEO_SHA256SUMS.txt' if args.video else 'PLATFORM_SHA256SUMS.txt')
     sums.write_text(report['sha256']+'  '+package.name+'\n')
-    bundle=dist/(f'bibilabu-PS3-{version}-USB.zip' if args.release else f'bibilabu-PS3-test-{version}-USB.zip') if args.bili_play else dist/f'bibilabu-PS3-{kind}-test-{version}-USB.zip'
+    bundle=dist/(f'bibilabu-PS3-{version}-fw3.55-USB.zip' if args.release else f'bibilabu-PS3-test-{version}-USB.zip') if args.bili_play else dist/f'bibilabu-PS3-{kind}-test-{version}-USB.zip'
     files=[package,manifest]
     if args.bili_play and not args.release and (PORT/'DANMAKU_1080_RESEARCH.md').exists():
         shutil.copyfile(PORT/'DANMAKU_1080_RESEARCH.md',dist/'DANMAKU_1080_RESEARCH.md');files.append(dist/'DANMAKU_1080_RESEARCH.md')
