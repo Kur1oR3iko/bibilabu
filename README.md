@@ -1,6 +1,6 @@
 # bibilabu PS3 · 1.0.0
 
-基于 PS3 的 Bilibili 原生客户端实验项目。
+基于 PS3 的 Bilibili 原生客户端实验项目,主要由codex许愿式编程开发得到，ui模仿经典的xmb设计 ，背景由机器当前壁纸决定。
 
 ## 灵感与实现
 
