@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(bibilabu_ps3 VERSION 1.0.0 LANGUAGES CXX)
+project(bibilabu_ps3 VERSION 1.0.1 LANGUAGES CXX)
 option(PS3_PORT_BUILD_TESTS "Build host tests for PS3 stream policy" OFF)
 add_library(bibilabu_ps3_policy STATIC src/stream_policy.cpp)
 target_include_directories(bibilabu_ps3_policy PUBLIC include)

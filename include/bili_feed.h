@@ -72,3 +72,20 @@ int bili_feed_parse_response(bili_feed_state_t *st,const char *body,int search);
 
 int bili_feed_open_folder(bili_feed_state_t *st,int index);
 int bili_feed_refresh(bili_feed_state_t *st);
+
+/* Remove one video from the currently opened favourite folder. */
+int bili_feed_delete_favorite(const char *ca,const char *cookie,uint64_t media_id,uint64_t aid,
+                              int (*cancel)(void*),void *arg,void (*log)(const char*));
+
+#define BILI_RELATION_MAX 12
+typedef struct {uint64_t mid;char name[64],face[512],sign[160];} bili_relation_user;
+typedef struct {
+    bili_relation_user users[BILI_RELATION_MAX];
+    int count;
+    unsigned page;
+    int has_more;
+    char status[160];
+} bili_relation_state;
+/* WBI-signed followings / followers list for the logged-in account. */
+int bili_relation_load(const char *ca,const char *cookie,uint64_t mid,int followers,unsigned page,
+                       bili_relation_state *out,int (*cancel)(void*),void *arg,void (*log)(const char*));

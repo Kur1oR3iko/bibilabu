@@ -78,27 +78,65 @@ static int fs_write_all(const char *path,const char *data,size_t sz)
 #endif
 }
 
-
-unsigned wili_settings_load_density(const char *path)
+static int valid_qn(unsigned qn){return qn==16 || qn==32 || qn==64;}
+void wili_settings_defaults(wili_settings *s)
 {
-    if(!path || strlen(path)>240)return WILI_DEFAULT_DANMAKU_DENSITY;
+    if(!s)return;
+    s->danmaku_density=WILI_DEFAULT_DANMAKU_DENSITY;
+    s->default_qn=WILI_DEFAULT_QUALITY_QN;
+    s->volume=WILI_DEFAULT_VOLUME;
+}
+/* Both formats are validated by re-rendering the canonical text and comparing
+   byte for byte: no free-form sscanf result is ever trusted. */
+static int parse_settings(const char *data,size_t n,wili_settings *out)
+{
+    wili_settings s;wili_settings_defaults(&s);
+    char canonical[192];unsigned density=7,qn=0,volume=101;int length;
+    if(sscanf(data,"bibilabu-settings-v2\ndanmaku_density=%u\ndefault_qn=%u\nvolume=%u",
+              &density,&qn,&volume)==3 &&
+       density<=6 && valid_qn(qn) && volume<=100){
+        length=snprintf(canonical,sizeof(canonical),
+            "bibilabu-settings-v2\ndanmaku_density=%u\ndefault_qn=%u\nvolume=%u\n",density,qn,volume);
+        if(length>0 && (size_t)length==n && !memcmp(data,canonical,n)){
+            s.danmaku_density=density;s.default_qn=qn;s.volume=volume;*out=s;return 0;
+        }
+    }
+    density=7;
+    if(sscanf(data,"bibilabu-settings-v1\ndanmaku_density=%u",&density)==1 && density<=6){
+        length=snprintf(canonical,sizeof(canonical),"bibilabu-settings-v1\ndanmaku_density=%u\n",density);
+        if(length>0 && (size_t)length==n && !memcmp(data,canonical,n)){
+            s.danmaku_density=density;*out=s;return 0;
+        }
+    }
+    return -1;
+}
+wili_settings wili_settings_load(const char *path)
+{
+    wili_settings s;wili_settings_defaults(&s);
+    if(!path || strlen(path)>240)return s;
     for(unsigned i=0;i<2;i++){
         char file[256];snprintf(file,sizeof(file),"%s%s",path,i?".bak":"");
         char *data=NULL;size_t n=0;if(fs_read_all(file,&data,&n))continue;
-        unsigned value=7;char canonical[80];
-        if(sscanf(data,"bibilabu-settings-v1\ndanmaku_density=%u",&value)==1 && value<=6){
-            int length=snprintf(canonical,sizeof(canonical),"bibilabu-settings-v1\ndanmaku_density=%u\n",value);
-            if(length>0 && (size_t)length==n && !memcmp(data,canonical,n)){free(data);return value;}
-        }
-        free(data);
+        wili_settings parsed;int ok=!parse_settings(data,n,&parsed);free(data);
+        if(ok)return parsed;
     }
-    return WILI_DEFAULT_DANMAKU_DENSITY;
+    return s;
 }
-int wili_settings_save_density(const char *path,unsigned density)
+int wili_settings_save(const char *path,const wili_settings *s)
 {
-    if(!path || strlen(path)>240 || density>6)return -1;
-    char content[80],backup[256];int n=snprintf(content,sizeof(content),"bibilabu-settings-v1\ndanmaku_density=%u\n",density);
+    if(!path || strlen(path)>240 || !s || s->danmaku_density>6 || !valid_qn(s->default_qn) || s->volume>100)return -1;
+    char content[192],backup[256];
+    int n=snprintf(content,sizeof(content),
+        "bibilabu-settings-v2\ndanmaku_density=%u\ndefault_qn=%u\nvolume=%u\n",
+        s->danmaku_density,s->default_qn,s->volume);
     if(n<=0 || (size_t)n>=sizeof(content) || fs_write_all(path,content,(size_t)n))return -1;
     snprintf(backup,sizeof(backup),"%s.bak",path);
     return fs_write_all(backup,content,(size_t)n);
+}
+unsigned wili_settings_load_density(const char *path){return wili_settings_load(path).danmaku_density;}
+int wili_settings_save_density(const char *path,unsigned density)
+{
+    if(density>6)return -1;
+    wili_settings s=wili_settings_load(path);s.danmaku_density=density;
+    return wili_settings_save(path,&s);
 }

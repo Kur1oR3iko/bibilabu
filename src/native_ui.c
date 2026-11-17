@@ -146,7 +146,8 @@ void native_ui_feed(uint32_t *fb,const uint32_t *background,const bili_feed_stat
     if(feed->current_tab==FEED_TAB_USER){
         icon(fb,324,391,57,5,WHITE);
         text(fb,430,390,30,qr->is_logged_in?"你的账号":"登录哔哩哔哩",WHITE);
-        text(fb,432,437,20,qr->is_logged_in?"方块键退出登录":"叉键获取二维码，在手机上确认",MUTED);
+        if(qr->is_logged_in){text(fb,432,437,19,"叉键 查看关注 / 粉丝    R2 打开设置",MUTED);text(fb,432,466,17,"方块键 退出登录",MUTED);}
+        else text(fb,432,437,20,"叉键获取二维码，在手机上确认",MUTED);
         if(!qr->is_logged_in && (qr->state==WILI_QR_NEED_SCAN || qr->state==WILI_QR_NEED_CONFIRM)){
             int scale=240/(qr->size+8),box=(qr->size+8)*scale;
             if(scale>0){int x=946+(240-box)/2,y=356;
@@ -178,14 +179,18 @@ void native_ui_feed(uint32_t *fb,const uint32_t *background,const bili_feed_stat
                 if(weight>0.65f)label(fb,462,cy+39,18,713,1,detail,MUTED);
             }else label(fb,460,cy+5,21,715,1,item->title,focus_color(weight));
         }
-        char count[96];snprintf(count,sizeof(count),"%d / %d   ·   第 %u 页%s",selected+1,feed->item_count,feed->page?feed->page:1,feed->has_more?"   ·   R2 下一页":"");text(fb,435,641,16,count,MUTED);
+        char count[128];
+        if(feed->current_tab==FEED_TAB_FAVORITE && feed->favorite_id)
+            snprintf(count,sizeof(count),"%d / %d   ·   第 %u 页   ·   方块键 删除收藏%s",selected+1,feed->item_count,feed->page?feed->page:1,feed->has_more?"   ·   R2 下一页":"");
+        else snprintf(count,sizeof(count),"%d / %d   ·   第 %u 页%s",selected+1,feed->item_count,feed->page?feed->page:1,feed->has_more?"   ·   R2 下一页":"");
+        text(fb,435,641,16,count,MUTED);
     }else {
         icon(fb,325,396,54,feed->current_tab,WHITE);
         text(fb,430,393,28,feed->loading?"正在连接…":feed->current_tab==FEED_TAB_SEARCH?"搜索视频":"暂无内容",WHITE);
         label(fb,432,442,21,725,2,feed->status_msg,MUTED);
     }
     scene_x=scene_y=0;
-    text(fb,66,683,16,"左右 分类    上下 选择    叉键 确认    圆圈 返回    △ 刷新    SELECT 壁纸    START 退出",MUTED);
+    text(fb,66,683,16,"左右 分类    上下 选择    叉键 确认    圆圈 返回    △ 刷新    R2 下一页    START 退出",MUTED);
     if(message && *message){rect(fb,300,604,890,30,0x0013253a);label(fb,315,609,17,860,1,message,WHITE);}
 }
 static void aero_round(uint32_t *fb,int x,int y,int w,int h,int radius,uint32_t color)
@@ -225,10 +230,12 @@ static uint32_t *player_base_cache,*detail_body_cache;
 static detail_scroll detail_scroll_state;
 static int player_base_kind;
 static unsigned ui_dm_density=WILI_DEFAULT_DANMAKU_DENSITY;
+static unsigned ui_volume=WILI_DEFAULT_VOLUME;
 static char player_base_title[256];
 static unsigned player_base_quality;
 void native_ui_release_player_cache(void){free(player_base_cache);free(detail_body_cache);player_base_cache=detail_body_cache=NULL;player_base_title[0]=0;player_base_kind=0;}
 void native_ui_dm_density(unsigned density){if(ui_dm_density!=density){ui_dm_density=density;player_base_kind=0;}}
+void native_ui_volume(unsigned volume){if(volume>100)volume=100;if(ui_volume!=volume){ui_volume=volume;player_base_kind=0;}}
 static void player_base(uint32_t *fb,const char *title,unsigned quality)
 {
     memset(fb,0,UI_WIDTH*UI_HEIGHT*4);
@@ -236,6 +243,8 @@ static void player_base(uint32_t *fb,const char *title,unsigned quality)
     label(fb,70,51,27,980,1,title,WHITE);
     text(fb,72,88,15,"bibilabu",0xd0d4d4d4);
     char dm[64];if(ui_dm_density==6)snprintf(dm,sizeof(dm),"弹幕 6 / 6 · 全量");else snprintf(dm,sizeof(dm),"弹幕密度 %u / 6",ui_dm_density);text(fb,180,88,15,dm,0xd0d4d4d4);
+    char vol[64];snprintf(vol,sizeof(vol),"音量 %u%%  ·  L2 / R2 调节",ui_volume);text(fb,390,88,15,vol,0xd0d4d4d4);
+    if(ui_volume)aero_round(fb,1090,100,(int)(118*ui_volume/100),3,2,0x80ffffff);
     aero_panel(fb,1090,52,118,40,12);
     text(fb,1114,62,20,quality>=64?"720P":quality>=32?"480P":"360P",0xfff1f2f3);
 
@@ -489,4 +498,63 @@ void native_ui_comment_view(uint32_t *fb,const char *author,const char *message)
     native_ui_alpha_target(1);rect(fb,0,0,1280,720,0xb0000000);aero_panel(fb,140,64,1000,590,22);
     label(fb,175,91,27,920,1,author,WHITE);label(fb,175,148,22,920,16,message,WHITE);
     text(fb,175,615,19,"叉键 / 方块键 回复    圆圈 返回",WHITE);native_ui_alpha_target(0);
+}
+void native_ui_settings(uint32_t *fb,const uint32_t *background,const wili_settings *s,int selected,const char *status)
+{
+    native_ui_alpha_target(0);scene_x=scene_y=0;
+    memcpy(fb,background,UI_WIDTH*UI_HEIGHT*4);
+    for(unsigned i=0;i<UI_WIDTH*UI_HEIGHT;i++)fb[i]=ui_rgba_over(fb[i],0xd8000612u);
+    native_ui_alpha_target(1);
+    aero_panel(fb,150,96,980,528,24);
+    text(fb,190,130,30,"设置",WHITE);
+    text(fb,190,178,17,"左右 调整    上下 选择    叉键 / 圆圈 保存并返回",0xb8c8d8e4);
+    const char *names[3]={"默认清晰度","默认音量","弹幕密度"};
+    char values[3][64];
+    snprintf(values[0],sizeof(values[0]),"%s",s->default_qn>=64?"720P  高清":s->default_qn>=32?"480P  标准":"360P  流畅");
+    snprintf(values[1],sizeof(values[1]),"%u %%",s->volume);
+    if(s->danmaku_density==6)snprintf(values[2],sizeof(values[2]),"6 / 6  全量");
+    else snprintf(values[2],sizeof(values[2]),"%u / 6",s->danmaku_density);
+    for(int i=0;i<3;i++){
+        int y=248+i*98;
+        if(i==selected){aero_round(fb,184,y-16,912,84,14,0x1cffffff);text(fb,196,y+8,28,">",WHITE);}
+        text(fb,236,y,25,names[i],i==selected?WHITE:0xb4c2d0dc);
+        text(fb,720,y+2,23,values[i],i==selected?LIGHT:MUTED);
+        rect(fb,236,y+58,856,1,0x28ffffff);
+    }
+    if(status && *status)label(fb,190,556,17,900,1,status,0xd0ffffff);
+    text(fb,190,588,15,"保存位置  /dev_hdd0/tmp/bibilabu_settings.cfg",MUTED);
+    native_ui_alpha_target(0);
+}
+void native_ui_relation(uint32_t *fb,const uint32_t *background,const bili_relation_state *rel,int followers,int selected,const char *status)
+{
+    native_ui_alpha_target(0);scene_x=scene_y=0;
+    memcpy(fb,background,UI_WIDTH*UI_HEIGHT*4);
+    for(unsigned i=0;i<UI_WIDTH*UI_HEIGHT;i++)fb[i]=ui_rgba_over(fb[i],0xda000612u);
+    native_ui_alpha_target(1);
+    text(fb,66,44,23,"bibilabu",WHITE);
+    text(fb,66,84,17,"账号  >  关系",MUTED);
+    const char *cats[2]={"关注","粉丝"};
+    for(int i=0;i<2;i++){
+        int x=300+i*300,focus=(i==0 && !followers) || (i==1 && followers);
+        icon(fb,x,146,focus?56:42,5,focus?WHITE:MUTED);
+        text(fb,x+76,160,focus?28:22,cats[i],focus?WHITE:MUTED);
+        if(focus)rect(fb,x+72,206,180,2,LIGHT);
+    }
+    text(fb,66,240,16,"左右 切换关注 / 粉丝    上下 选择    L2 / R2 翻页    圆圈 返回",0xb0c4d4e0);
+    const int rows=8;
+    int first=0;
+    if(rel->count>rows){first=selected-rows/2;if(first<0)first=0;if(first>rel->count-rows)first=rel->count-rows;}
+    for(int r=0;r<rows && r+first<rel->count;r++){
+        int i=r+first,y=280+r*46;
+        const bili_relation_user *u=&rel->users[i];
+        if(i==selected){aero_round(fb,64,y-8,1150,42,10,0x22ffffff);text(fb,76,y-2,24,">",WHITE);}
+        text(fb,112,y,21,u->name,i==selected?WHITE:0xc4d0dce4);
+        char uid[64];snprintf(uid,sizeof(uid),"UID %llu",(unsigned long long)u->mid);
+        text(fb,450,y+3,15,uid,MUTED);
+        label(fb,650,y+3,15,540,1,u->sign,0xa4bcccd8);
+        rect(fb,112,y+34,1038,1,0x20ffffff);
+    }
+    if(!rel->count)label(fb,112,300,20,1000,2,status&&*status?status:"正在读取列表…",0xc8dce8f0);
+    else if(status&&*status)text(fb,112,668,15,status,MUTED);
+    native_ui_alpha_target(0);
 }

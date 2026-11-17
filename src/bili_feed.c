@@ -3,8 +3,10 @@
 #define _BSD_SOURCE
 #include "bili_feed.h"
 #include "https_request.h"
+#include "bili_api.h"
 #include "search_text.h"
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <json-c/json.h>
@@ -186,7 +188,14 @@ int bili_feed_parse_response(bili_feed_state_t *st,const char *body,int search)
             item.resource_id=id && json_object_get_int64(id)>0?(uint64_t)json_object_get_int64(id):0;item.is_folder=1;
             item.view_count=media_count?(uint32_t)json_object_get_int(media_count):0;
             if(item.resource_id)st->items[st->item_count++]=item;
-        }else if(!strncmp(item.bvid,"BV",2) && strlen(item.bvid)==12)st->items[st->item_count++]=item;
+        }else if(!strncmp(item.bvid,"BV",2) && strlen(item.bvid)==12){
+            if(st->current_tab==FEED_TAB_FAVORITE && st->favorite_id){
+                struct json_object *id=NULL;
+                if(json_object_object_get_ex(object,"id",&id))
+                    item.resource_id=(uint64_t)json_object_get_int64(id);
+            }
+            st->items[st->item_count++]=item;
+        }
     }
     st->has_more=folders?count>start+BILI_FEED_MAX_ITEMS:count>=BILI_FEED_MAX_ITEMS;
     if(st->current_tab==FEED_TAB_FAVORITE && st->favorite_id){struct json_object *more=NULL;if(json_object_object_get_ex(data,"has_more",&more))st->has_more=json_object_get_boolean(more);}
@@ -463,3 +472,126 @@ int bili_feed_refresh(bili_feed_state_t *st)
     int fetch=st->current_tab!=FEED_TAB_USER && (st->current_tab!=FEED_TAB_SEARCH || st->search_keyword[0]);
     int rc=activate_view(st,fetch);feed_unlock();return rc;
 }
+
+/* These actions are only linked into the PS3 application. Host-side feed
+   regressions link bili_feed.c alone and must not pull in the network layer. */
+#if defined(__PPU__) || defined(__CELLOS_LV2__)
+/* ---- account write actions and relation lists --------------------------- */
+static void quiet_log(const char *text){(void)text;}
+static int cookie_value(const char *cookie,const char *name,char *out,size_t cap)
+{
+    if(!cookie || !name || !out || !cap)return -1;
+    size_t key=strlen(name);out[0]=0;
+    for(const char *p=cookie;*p;){
+        while(*p==' ' || *p==';')p++;
+        const char *end=strchr(p,';');if(!end)end=p+strlen(p);
+        if((size_t)(end-p)>key && !strncmp(p,name,key) && p[key]=='='){
+            size_t n=(size_t)(end-p)-key-1;if(n>=cap)return -1;
+            memcpy(out,p+key+1,n);out[n]=0;return n?0:-1;
+        }
+        p=end;
+    }
+    return -1;
+}
+static int response_code(struct json_object *root)
+{
+    struct json_object *code=NULL;
+    if(!root || !json_object_object_get_ex(root,"code",&code))return -1;
+    return json_object_get_int(code);
+}
+static void copy_string(char *dst,size_t cap,struct json_object *obj,const char *key)
+{
+    struct json_object *v=NULL;
+    if(!obj || !json_object_object_get_ex(obj,key,&v) || !json_object_is_type(v,json_type_string)){dst[0]=0;return;}
+    const char *s=json_object_get_string(v);size_t n=s?strlen(s):0;
+    if(n>=cap){n=cap-1;while(n && ((unsigned char)s[n]&0xc0)==0x80)n--;}
+    memcpy(dst,s,n);dst[n]=0;
+    for(size_t i=0;i<n;i++)if((unsigned char)dst[i]<32)dst[i]=' ';
+}
+int bili_feed_delete_favorite(const char *ca,const char *cookie,uint64_t media_id,uint64_t aid,
+                              int (*cancel)(void*),void *arg,void (*logger)(const char*))
+{
+    void (*log)(const char*)=logger?logger:quiet_log;
+    char csrf[128];
+    if(!ca || !cookie || !*cookie || !media_id || !aid ||
+       cookie_value(cookie,"bili_jct",csrf,sizeof(csrf)) || strlen(csrf)!=32){
+        log("FAV_DELETE_REJECTED missing_login_or_ids");return -1;
+    }
+    char form[1024];
+    snprintf(form,sizeof(form),"rid=%llu&type=2&add_media_ids=&del_media_ids=%llu&media_id=%llu&csrf=%s&platform=web",
+             (unsigned long long)aid,(unsigned long long)aid,(unsigned long long)media_id,csrf);
+    wili_https_response r={0};
+    int rc=wili_https_post_form("https://api.bilibili.com/x/v3/fav/resource/deal",ca,cookie,form,65536,cancel,arg,&r,log);
+    struct json_object *root=(!rc && r.status==200 && r.body)?wili_bili_json_parse(r.body,r.bytes):NULL;
+    int code=response_code(root);long http=r.status;
+    if(root)json_object_put(root);
+    wili_https_response_free(&r);
+    if(code){
+        char line[160];snprintf(line,sizeof(line),"FAV_DELETE_FAILED http=%ld code=%d no_retry",http,code);log(line);
+        return -1;
+    }
+    log("FAV_DELETE_OK");return 0;
+}
+int bili_relation_load(const char *ca,const char *cookie,uint64_t mid,int followers,unsigned page,
+                       bili_relation_state *out,int (*cancel)(void*),void *arg,void (*logger)(const char*))
+{
+    void (*log)(const char*)=logger?logger:quiet_log;
+    if(!out)return -1;
+    memset(out,0,sizeof(*out));out->page=page?page:1;
+    if(!ca || !cookie || !*cookie || !mid){
+        snprintf(out->status,sizeof(out->status),"请先扫码登录后再查看");return -1;
+    }
+    wili_https_response r={0};
+    int rc=wili_https_get_cookie("https://api.bilibili.com/x/web-interface/nav",ca,NULL,cookie,262144,cancel,arg,&r,log);
+    wili_bili_nav nav;
+    int nav_ok=!rc && r.status==200 && !wili_bili_parse_nav(r.body,r.bytes,&nav) && nav.keys_ready;
+    uint64_t epoch=r.server_epoch?r.server_epoch:(uint64_t)time(NULL);
+    wili_https_response_free(&r);
+    if(!nav_ok){snprintf(out->status,sizeof(out->status),"WBI 密钥获取失败，请稍后重试");return -1;}
+    /* wili_bili_sign_sorted expects an already sorted query (order,pn,ps,vmid,wts). */
+    char raw[512],query[1024],url[1536];
+    snprintf(raw,sizeof(raw),"order=desc&pn=%u&ps=%u&vmid=%llu&wts=%llu",
+             out->page,BILI_RELATION_MAX,(unsigned long long)mid,(unsigned long long)epoch);
+    if(wili_bili_sign_sorted(raw,nav.mixin,query,sizeof(query))){
+        snprintf(out->status,sizeof(out->status),"签名失败，请稍后重试");return -1;
+    }
+    snprintf(url,sizeof(url),"https://api.bilibili.com/x/relation/%s?%s",
+             followers?"followers":"followings",query);
+    rc=wili_https_get_cookie(url,ca,NULL,cookie,262144,cancel,arg,&r,log);
+    long http=r.status;
+    struct json_object *root=(!rc && r.status==200 && r.body)?wili_bili_json_parse(r.body,r.bytes):NULL;
+    int code=response_code(root);
+    if(root && !code){
+        struct json_object *data=NULL,*list=NULL,*total=NULL;
+        json_object_object_get_ex(root,"data",&data);
+        if(data){json_object_object_get_ex(data,"list",&list);json_object_object_get_ex(data,"total",&total);}
+        unsigned count=0;
+        if(list && json_object_is_type(list,json_type_array))
+            for(unsigned i=0;i<(unsigned)json_object_array_length(list) && count<BILI_RELATION_MAX;i++){
+                struct json_object *e=json_object_array_get_idx(list,i),*m=NULL;
+                bili_relation_user *u=&out->users[count];
+                json_object_object_get_ex(e,"mid",&m);
+                u->mid=m?(uint64_t)json_object_get_int64(m):0;
+                copy_string(u->name,sizeof(u->name),e,"uname");
+                copy_string(u->face,sizeof(u->face),e,"face");
+                copy_string(u->sign,sizeof(u->sign),e,"sign");
+                if(u->mid && u->name[0])count++;
+            }
+        out->count=(int)count;
+        uint64_t n=total?(uint64_t)json_object_get_int64(total):0;
+        out->has_more=n?(uint64_t)out->page*BILI_RELATION_MAX<n:count==BILI_RELATION_MAX;
+        snprintf(out->status,sizeof(out->status),"%s · 第 %u 页 · %d 位",
+                 followers?"粉丝":"关注",out->page,count);
+    }
+    if(root)json_object_put(root);
+    wili_https_response_free(&r);
+    if(code){
+        char line[192];snprintf(line,sizeof(line),"RELATION_API_STOP http=%ld code=%d no_retry no_identity_change",http,code);log(line);
+        if(http==403 || http==412)snprintf(out->status,sizeof(out->status),"接口受限（HTTP %ld），请稍后重试",http);
+        else snprintf(out->status,sizeof(out->status),"列表读取失败（%d），请稍后重试",code);
+        return -1;
+    }
+    if(!out->count && !out->status[0])snprintf(out->status,sizeof(out->status),"%s列表为空",followers?"粉丝":"关注");
+    return 0;
+}
+#endif /* PS3-only account actions */

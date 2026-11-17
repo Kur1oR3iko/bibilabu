@@ -19,6 +19,7 @@
 #include "ui_sound.h"
 #include "adec_bindings.h"
 #include "adec_compat.h"
+#include "user_settings.h"
 #include <codec/vdec.h>
 #include <audio/audio.h>
 #include <sysmodule/sysmodule.h>
@@ -37,6 +38,9 @@ _Static_assert(sizeof(vdecType)==8 && sizeof(vdecAttr)==16,"vdec ABI");
 _Static_assert(sizeof(vdecAU)==40 && offsetof(vdecAU,userdata)==24,"vdecAU ABI");
 _Static_assert(sizeof(vdecPicture)==80 && offsetof(vdecPicture,codec_specific_addr)==72,"vdecPicture ABI");
 _Static_assert(sizeof(audioPortParam)==32 && sizeof(audioPortConfig)==32,"audio port ABI");
+/* Software gain on the decoded PCM feed. Kept outside `p` so it survives a
+   stop/start cycle; the navigation chime uses its own audio port. */
+static volatile unsigned g_video_volume=WILI_DEFAULT_VOLUME;
 
 #define VIDEO_POOL 8u
 #define VIDEO_PACKET (512u*1024u)
@@ -386,6 +390,8 @@ static int write_block(unsigned block)
     u32 produced=snap(&p.a_produced);
     if(produced-p.queued<n)return 0;
     if(n && wili_pcm_ring_read(p.pcm,PCM_RING,p.queued,produced,dst,n))return 0;
+    float gain=(float)g_video_volume/100.0f;
+    if(gain!=1.0f)for(unsigned i=0;i<n*2;i++)dst[i]*=gain;
     if(n<BLOCK)memset(dst+n*2,0,(BLOCK-n)*2*sizeof(float));
     p.queued+=n;__sync_synchronize();return 1;
 }
@@ -827,7 +833,7 @@ static int stop_internal(int keep_session)
     }
     if(p.worker_started){
         set(&p.running,0);uint64_t begin=time_us();
-        while(!snap(&p.thread_done) && time_us()-begin<1000000)sysUsleep(1000);
+        while(!snap(&p.thread_done) && time_us()-begin<3000000)sysUsleep(1000);
         if(!snap(&p.thread_done)){p.log("AUDIO_WORKER_STOP_TIMEOUT retain_buffers_for_kernel_teardown");return -1;}
         uint64_t result=0;rc_log("AUDIO_WORKER_JOIN",sysThreadJoin(p.thread,&result));p.worker_started=0;
     }
@@ -870,6 +876,8 @@ static int stop_internal(int keep_session)
     memset(&p,0,sizeof(p));return 0;
 }
 void wili_video_cancel_workers(void){set(&p.soft_running,0);set(&p.net_running,0);set(&p.running,0);}
+void wili_video_set_volume(unsigned volume){g_video_volume=volume>100?100:volume;}
+unsigned wili_video_get_volume(void){return g_video_volume;}
 int wili_video_stop_safe(void){return stop_internal(0);}
 void wili_video_stop(void){(void)wili_video_stop_safe();}
 int wili_video_seek(uint64_t target_ms,uint64_t now)

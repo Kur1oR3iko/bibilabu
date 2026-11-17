@@ -24,6 +24,8 @@ int wili_video_is_paused(void);
 
 int wili_video_stop_safe(void);
 void wili_video_cancel_workers(void);
+void wili_video_set_volume(unsigned volume);
+unsigned wili_video_get_volume(void);
 void wili_video_log_clock(void);
 unsigned wili_video_buffer_ms(void);
 

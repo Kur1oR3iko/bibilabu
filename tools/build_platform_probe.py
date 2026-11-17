@@ -189,7 +189,7 @@ def main():
     parser.add_argument('--network',action='store_true',help='Use configured LAN HTTP/HTTPS Range sources')
     parser.add_argument('--bili',action='store_true',help='Public HTTPS, Bilibili metadata/WBI/playurl/CDN probe page')
     parser.add_argument('--bili-play',action='store_true',help='Real Bilibili DASH native playback test')
-    parser.add_argument('--release',action='store_true',help='Build the public bibilabu 1.0.0 package identity')
+    parser.add_argument('--release',action='store_true',help='Build the public bibilabu 1.0.1beta package identity')
     parser.add_argument('--release-only',action='store_true',help='Build and package without running test suites')
     args=parser.parse_args()
     if args.release and not args.bili_play:parser.error('--release requires --bili-play')
@@ -200,7 +200,7 @@ def main():
         args.bili=False
     if args.bili:args.network=True
     if args.network:args.video=True
-    version=('1.0.0' if args.release else '1.0.0-r5') if args.bili_play else '0.9' if args.bili else '0.8' if args.network else '0.7.1' if args.video else VERSION
+    version=('1.0.1beta' if args.release else '1.0.0-r5') if args.bili_play else '0.9' if args.bili else '0.8' if args.network else '0.7.1' if args.video else VERSION
     kind='bili-play' if args.bili_play else 'api' if args.bili else 'network' if args.network else 'video' if args.video else 'platform'
     sdk=Path(os.environ.get('PS3DEV','/opt/wiliwili-ps3/ps3dev'))
     software_sdk=sdk.parent/'ffmpeg-ppu-7.1.1'
@@ -368,7 +368,7 @@ def main():
     if args.video:values.update(TITLE='bibilabu PS3 Stream Test 0.7.1',APP_VER='00.71')
     if args.network:values.update(TITLE='bibilabu PS3 Network Test 0.8',APP_VER='00.80')
     if args.bili:values.update(TITLE='bibilabu PS3 API Test 0.9',APP_VER='00.90')
-    if args.bili_play:values.update(TITLE='bibilabu PS3 1.0.0' if args.release else 'bibilabu PS3 1.0.0-r5',APP_VER='01.00')
+    if args.bili_play:values.update(TITLE='bibilabu PS3 1.0.1beta' if args.release else 'bibilabu PS3 1.0.0-r5',APP_VER='01.01' if args.release else '01.00')
     for value in xml.getroot().findall('value'):
         if value.get('name')in values:value.text=values[value.get('name')]
     xml_path=build/'PARAM.SFO.xml';xml.write(xml_path,encoding='utf-8',xml_declaration=True)
@@ -466,7 +466,7 @@ def main():
                       buffers={'video_packets':16*1024*1024,'video_packet_descriptors':128,'video_range_cache':1024*1024,'video_packet_scratch':512*1024,'player_static_ui_cache':1280*720*4,'audio_packets':64*8192,'decoder_video_input':8*512*1024,
                                'video_yuv_720p_pool_example':14680064,'video_yuv_portrait_720p_pool_example':15728640,'danmaku_atlas':10*1024*1024,'thumbnail_compressed_cache_max':8*1024*1024,'feed_session_pages_max':256,
                                'ui_mapped':4*1024*1024,'ui_background_mapped':4*1024*1024,'detail_scroll_canvas':1280*720*4},
-                      teardown='Concurrent producer cancellation; cleanup worker with 3s main-thread deadline and cached system flips; logger drain bounded to 750ms',
+                      teardown='Concurrent producer cancellation; cleanup worker with 6s main-thread deadline, bounded request join and cached system flips; logger drain bounded to 750ms',
                       logging='Timestamped 16KiB batch writes to HDD before USB; periodic fsync even under traffic; 4MiB rotation',
                       rendering='RSX wallpaper then pinned YUV video, danmaku and clear UI; cached comment strip clipped independently; cached VRAM flips',
                       logo='Original silver B/play monogram; assets/logo-mark.svg and 320x176 ICON0.PNG',
@@ -476,7 +476,7 @@ def main():
                       chinese_input='Explicit simplified/traditional Chinese and English OSK panels; UTF16/UTF8 conversion; search and comment editing',
                       TLS='CA/hostname verification enabled',callback_static_check=callback,
                       audio_callback_checks=audio_callbacks,adec_import_table=adec_imports,vdec_import_table=vdec_imports)
-    if args.release:report.update(distribution='public release v1.0.0',package_identity='bibilabu PS3 1.0.0')
+    if args.release:report.update(distribution='public release v1.0.1beta',package_identity='bibilabu PS3 1.0.1beta')
     if args.release_only:report['host_tests']='SKIPPED_IN_THIS_BUILD_MODE; separately executed checks are recorded in build/evidence'
     manifest=dist/f'{kind}-test-manifest.json'
     manifest.write_text(json.dumps(report,indent=2)+'\n')

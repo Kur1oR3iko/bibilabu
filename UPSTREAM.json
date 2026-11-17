@@ -1,9 +1,4 @@
 {
-  "wiliwili": {
-    "repository": "https://github.com/xfangfang/wiliwili",
-    "commit": "88e5876bea9502d06f46a8656e3530684d3aaf7d",
-    "license": "GPL-3.0"
-  },
   "yo_reference": {
     "repository": "https://github.com/mohasi/ps3-dev",
     "commit": "d9d3b446f16de009663c1cca97ed0fc8ce0aa47d",
@@ -27,7 +22,7 @@
   },
   "font_asset": {
     "file": "assets/switch_font.ttf",
-    "origin": "SourceHanSans from the upstream wiliwili v1.6.0 tree",
+    "origin": "SourceHanSans (SIL Open Font License 1.1)",
     "license": "SIL Open Font License 1.1",
     "license_file": "assets/switch_font-LICENSE.txt"
   }

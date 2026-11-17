@@ -4,6 +4,7 @@
 #include "qr_login.h"
 #include "bili_detail.h"
 #include "detail_layout.h"
+#include "user_settings.h"
 #define UI_WIDTH 1280u
 #define UI_HEIGHT 720u
 void native_ui_background(uint32_t *fb);
@@ -32,3 +33,8 @@ void native_ui_focus_comments(unsigned comments,uint64_t now,int immediate);
 
 void native_ui_frost_exit(uint32_t *fb);
 void native_ui_loading(uint32_t *fb,const uint32_t *background,uint64_t now,int canceling);
+
+/* Player volume OSD, settings panel and account relation lists. */
+void native_ui_volume(unsigned volume);
+void native_ui_settings(uint32_t *fb,const uint32_t *background,const wili_settings *settings,int selected,const char *status);
+void native_ui_relation(uint32_t *fb,const uint32_t *background,const bili_relation_state *rel,int followers,int selected,const char *status);

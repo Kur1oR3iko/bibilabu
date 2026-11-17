@@ -22,6 +22,7 @@
 #include <malloc.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "probe_identity.h"
@@ -117,8 +118,17 @@ static int g_osd_visible = 1;
 static u64 g_last_osd_action = 0;
 static int g_quality_menu_open = 0;  // in player: 1 = quality menu open
 static int g_quality_menu_sel = 0;   // selected quality index in menu
-static unsigned g_current_qn = 64;   // 64 = 720P, 32 = 480P, 16 = 360P, 80 = 1080P
+static unsigned g_current_qn = WILI_DEFAULT_QUALITY_QN;
 static char g_active_bvid[16];
+
+static wili_settings g_settings;
+static int settings_open,settings_sel;
+static char settings_status[160];
+static int relation_open,relation_followers,relation_sel,relation_busy;
+static bili_relation_state g_relation;
+static char relation_status[160];
+static int favorite_confirm,favorite_choice;
+static u64 cancel_deadline;
 
 static void text_log(const char *text){runtime_log_write(text);}
 
@@ -278,6 +288,10 @@ static u64 request_seek_ms;
 static int request_exact;
 static wili_qr_login request_qr;
 static u64 request_time;
+static int request_thread_live,request_detached;
+static uint64_t request_fav_media,request_fav_aid,request_mid;
+static unsigned request_page;
+static bili_relation_state request_relation;
 static int api_cancel(void *arg){(void)arg;return !running || __sync_add_and_fetch(&request_cancel,0);}
 static unsigned quality_bit(unsigned qn){return qn==80?8u:qn==64?4u:qn==32?2u:qn==16?1u:0u;}
 static int open_decoder_compatible_session(void)
@@ -337,18 +351,25 @@ static void request_worker(void *arg)
     else if(request_kind==6){
         bili_feed_shutdown(&g_feed);ui_image_shutdown();bili_detail_shutdown();danmaku_shutdown();history_sync_shutdown(0);wili_network_shutdown(text_log);
         request_result=wili_network_prepare(text_log);
-    }else request_result=wili_qr_login_logout(&request_qr);
+    }
+    else if(request_kind==7)
+        request_result=bili_feed_delete_favorite("/dev_hdd0/game/WILIPRB01/USRDIR/cacert.pem",
+            request_cookie,request_fav_media,request_fav_aid,api_cancel,NULL,text_log);
+    else if(request_kind==8 || request_kind==9)
+        request_result=bili_relation_load("/dev_hdd0/game/WILIPRB01/USRDIR/cacert.pem",
+            request_cookie,request_mid,request_kind==9,request_page,&request_relation,api_cancel,NULL,text_log);
+    else request_result=wili_qr_login_logout(&request_qr);
     __sync_lock_test_and_set(&request_done,1);sysThreadExit(0);
 }
 static int launch_request(int kind)
 {
-    if(request_kind)return -1;
+    if(request_kind || request_detached)return -1;
     if(kind==4)history_sync_account(NULL);
     request_kind=kind;request_qr=g_qr;request_qr.cancel=api_cancel;request_qr.cancel_arg=NULL;request_time=now_us();request_done=0;request_cancel=0;
     request_error[0]=0;
     int rc=sysThreadCreate(&request_thread,request_worker,NULL,1050,512*1024,THREAD_JOINABLE,"bibi-request");
     if(rc){request_kind=0;result_log("REQUEST_WORKER_CREATE",rc);return -1;}
-    ui_dirty=1;return 0;
+    request_thread_live=1;ui_dirty=1;return 0;
 }
 static void reconnect_network(void);
 static int stop_playback(void)
@@ -359,6 +380,7 @@ static int stop_playback(void)
         text_log("PLAYER_STOP_UNSAFE process_exit_required");running=0;return -1;
     }
     g_view=VIEW_FEED;ui_dirty=1;player_drawn=0;last_overlay=-1;
+    settings_open=relation_open=favorite_confirm=0;
     danmaku_stop();bili_detail_cancel();comment_open=-1;detail_creator=action_confirm=comment_page_pending=video_page_pending=0;comment_draft[0]=0;
     ui_sound_set_muted(0);
     ui_image_pause(0);return 0;
@@ -377,6 +399,7 @@ static void start_playback_at(const char *bvid,unsigned qn,u64 seek_ms,int exact
     ui_image_pause(1);
     ui_sound_set_muted(1);
     snprintf(ui_message,sizeof(ui_message),"正在连接视频…  圆圈键可取消");
+    cancel_deadline=0;
     if(launch_request(1)){ui_image_pause(0);snprintf(ui_message,sizeof(ui_message),"无法启动播放请求，请重试");}
 }
 static void start_playback(const char *bvid,unsigned qn)
@@ -412,15 +435,36 @@ static void seek_relative(int seconds)
 }
 static void pump_request(void)
 {
+    /* A cancelled load whose worker is still inside a blocking TLS/HTTP call
+       must not hold the UI hostage. Release the interface immediately and join
+       the orphaned worker on the next pump (or during exit cleanup). */
+    if(request_detached){
+        if(__sync_add_and_fetch(&request_done,0)){
+            u64 joined;sysThreadJoin(request_thread,&joined);
+            request_thread_live=0;request_detached=0;
+            wili_bili_session_close(wili_bili_play_session(),text_log);
+            text_log("PLAY_REQUEST_ABANDONED_JOINED");
+            ui_dirty=1;
+        }
+        return;
+    }
+    if(request_kind==1 && request_cancel && !__sync_add_and_fetch(&request_done,0) &&
+       cancel_deadline && now_us()>cancel_deadline){
+        text_log("PLAY_REQUEST_CANCEL_FORCED_UI_RELEASE");
+        request_detached=1;request_kind=0;
+        ui_image_pause(0);ui_sound_set_muted(0);
+        snprintf(ui_message,sizeof(ui_message),"已取消播放，正在收尾；稍后可重新选择视频");
+        ui_dirty=1;return;
+    }
     if(!request_kind || !__sync_add_and_fetch(&request_done,0))return;
-    u64 result;sysThreadJoin(request_thread,&result);int kind=request_kind;request_kind=0;
+    u64 result;sysThreadJoin(request_thread,&result);request_thread_live=0;int kind=request_kind;request_kind=0;cancel_deadline=0;
     if(kind==6){
         net_ok=!request_result;const char *ca="/dev_hdd0/game/WILIPRB01/USRDIR/cacert.pem";
         g_feed.loading=0;g_feed.network_error=0;
         if(net_ok){
             if(bili_detail_init(ca,text_log))text_log("DETAIL_INIT_FAILED");
             if(danmaku_init(ca,text_log))text_log("DANMAKU_INIT_FAILED");
-        native_ui_dm_density(danmaku_get_density());
+        native_ui_dm_density(danmaku_get_density());g_settings.danmaku_density=danmaku_get_density();
             if(history_sync_init(ca,text_log))text_log("HISTORY_INIT_FAILED");
             bili_feed_init(&g_feed,g_qr.is_logged_in?g_qr.cookie:NULL,ca,text_log);ui_image_init(ca,text_log);
             bili_feed_load_tab(&g_feed,reconnect_tab);wallpaper_poll(now_us(),1,text_log);
@@ -452,6 +496,12 @@ static void pump_request(void)
             rendered_generation=0;last_overlay=-1;g_osd_visible=1;g_quality_menu_open=0;
             g_last_osd_action=now_us();opacity_clock=g_last_osd_action;osd_opacity=0;ui_message[0]=0;
         }
+    }else if(kind==7){
+        if(request_result)snprintf(ui_message,sizeof(ui_message),"删除失败，请检查登录状态或稍后重试");
+        else{snprintf(ui_message,sizeof(ui_message),"已从收藏夹删除");bili_feed_refresh(&g_feed);g_focused_card=0;}
+    }else if(kind==8 || kind==9){
+        g_relation=request_relation;relation_busy=0;relation_sel=0;
+        snprintf(relation_status,sizeof(relation_status),"%s",g_relation.status[0]?g_relation.status:(request_result?"列表读取失败":"列表已更新"));
     }else{
         if(g_qr.is_logged_in!=request_qr.is_logged_in || strcmp(g_qr.dede_user_id,request_qr.dede_user_id)){known_quality_mask=0;quality_bvid[0]=0;}
         g_qr=request_qr;
@@ -541,6 +591,15 @@ static int draw(u64 now)
         if(ui_dirty){
             if(request_kind==1)native_ui_loading(ui_surface,ui_background,now,request_cancel);
             else native_ui_feed(ui_surface,ui_background,&g_feed,&g_qr,g_focused_card,g_tab_focus,ui_message);
+            if(settings_open)native_ui_settings(ui_surface,ui_background,&g_settings,settings_sel,settings_status);
+            if(relation_open)native_ui_relation(ui_surface,ui_background,&g_relation,relation_followers,relation_sel,relation_status);
+            if(favorite_confirm && g_feed.item_count>0){
+                int idx=g_focused_card<g_feed.item_count?g_focused_card:0;
+                char body[512];
+                snprintf(body,sizeof(body),"从「%s」删除「%s」？此操作会同步到 B 站收藏夹。",
+                         g_feed.favorite_title[0]?g_feed.favorite_title:"当前收藏夹",g_feed.items[idx].title);
+                native_ui_confirm(ui_surface,"删除收藏视频",body,favorite_choice);
+            }
             if(quick_search)native_ui_keyboard(ui_surface,quick_text,quick_key,quick_lower);
             if(exit_confirm){native_ui_frost_exit(ui_surface);native_ui_alpha_target(1);native_ui_exit(ui_surface,exit_choice);native_ui_alpha_target(0);}
             cache_flush(ui_surface,UI_WIDTH*UI_HEIGHT*4);}
@@ -607,6 +666,30 @@ static void change_density(void)
 {
     unsigned level=(danmaku_get_density()+1)%7;danmaku_density(level);native_ui_dm_density(level);ui_dirty=dm_dirty=1;
 }
+static void change_volume(int delta)
+{
+    int v=(int)g_settings.volume+delta;if(v<0)v=0;if(v>100)v=100;
+    g_settings.volume=(unsigned)v;wili_video_set_volume((unsigned)v);native_ui_volume((unsigned)v);
+    (void)wili_settings_save(WILI_SETTINGS_PATH,&g_settings);
+    char line[96];snprintf(line,sizeof(line),"VOLUME_CHANGE volume=%u",(unsigned)v);text_log(line);
+    g_osd_visible=1;g_last_osd_action=now_us();ui_dirty=1;
+}
+static void load_relation(void)
+{
+    if(request_kind || request_detached)return;
+    if(!g_qr.is_logged_in){snprintf(relation_status,sizeof(relation_status),"请先回账号栏目扫码登录");relation_busy=0;ui_dirty=1;return;}
+    const char *id=strstr(g_qr.cookie,"DedeUserID=");
+    uint64_t mid=id?strtoull(id+11,NULL,10):0;
+    if(!mid){snprintf(relation_status,sizeof(relation_status),"账号标识缺失，请重新登录");relation_busy=0;ui_dirty=1;return;}
+    request_mid=mid;request_page=g_relation.page?g_relation.page:1;
+    snprintf(request_cookie,sizeof(request_cookie),"%s",g_qr.cookie);
+    relation_busy=1;
+    snprintf(relation_status,sizeof(relation_status),"正在读取%s列表…",relation_followers?"粉丝":"关注");
+    if(launch_request(relation_followers?9:8)){
+        relation_busy=0;snprintf(relation_status,sizeof(relation_status),"请求启动失败，请稍后重试");
+    }
+    ui_dirty=1;
+}
 static void compose_comment(uint64_t parent)
 {
     if(!g_qr.is_logged_in){snprintf(g_detail.status,sizeof(g_detail.status),"请先回账号栏目扫码登录");return;}
@@ -627,7 +710,7 @@ static void detail_input(u32 pressed)
         if(pressed&BTN_TRIANGLE){if(!bili_detail_action(BILI_DETAIL_CREATOR,NULL,0))video_page_pending=1;}
         if(pressed&BTN_R2){if(!bili_detail_action(BILI_DETAIL_CREATOR_NEXT,NULL,0))video_page_pending=1;}
         if(pressed&BTN_L2){if(!bili_detail_action(BILI_DETAIL_CREATOR_PREV,NULL,0))video_page_pending=1;}
-        if((pressed&BTN_CROSS) && detail_focus<n)start_playback(g_detail.creator[detail_focus].bvid,64);
+        if((pressed&BTN_CROSS) && detail_focus<n)start_playback(g_detail.creator[detail_focus].bvid,g_settings.default_qn);
         return;
     }
     if(pressed&BTN_LEFT)detail_focus=(int)detail_navigate((unsigned)detail_focus,DETAIL_NAV_LEFT,(unsigned)g_detail.related_count,(unsigned)g_detail.comment_count);
@@ -656,7 +739,7 @@ static void detail_input(u32 pressed)
         else if(detail_focus==5)compose_comment(0);
         else if(detail_focus==6)change_density();
         else if(detail_focus>=(int)DETAIL_COMMENT_FOCUS && detail_focus-(int)DETAIL_COMMENT_FOCUS<g_detail.comment_count)comment_open=detail_focus-DETAIL_COMMENT_FOCUS;
-        else if(detail_focus>=(int)DETAIL_RELATED_FOCUS && detail_focus-(int)DETAIL_RELATED_FOCUS<g_detail.related_count)start_playback(g_detail.related[detail_focus-DETAIL_RELATED_FOCUS].bvid,64);
+        else if(detail_focus>=(int)DETAIL_RELATED_FOCUS && detail_focus-(int)DETAIL_RELATED_FOCUS<g_detail.related_count)start_playback(g_detail.related[detail_focus-DETAIL_RELATED_FOCUS].bvid,g_settings.default_qn);
     }
 }
 static void input(void)
@@ -683,6 +766,63 @@ static void input(void)
             if(pressed&(BTN_RIGHT|BTN_DOWN))exit_choice=1;
             if(pressed&BTN_CIRCLE)exit_confirm=0;
             if(pressed&BTN_CROSS){if(exit_choice){running=0;__sync_lock_test_and_set(&request_cancel,1);}exit_confirm=0;}
+            continue;
+        }
+        if(settings_open){
+            if(pressed&BTN_UP)settings_sel=(settings_sel+2)%3;
+            if(pressed&BTN_DOWN)settings_sel=(settings_sel+1)%3;
+            if(pressed&(BTN_LEFT|BTN_RIGHT)){
+                int dir=(pressed&BTN_RIGHT)?1:-1;
+                if(settings_sel==0){
+                    static const unsigned qns[3]={16,32,64};int at=1;
+                    for(int i=0;i<3;i++)if(qns[i]==g_settings.default_qn)at=i;
+                    at=(at+dir+3)%3;g_settings.default_qn=qns[at];g_current_qn=g_settings.default_qn;
+                }else if(settings_sel==1){
+                    int v=(int)g_settings.volume+dir*10;if(v<0)v=0;if(v>100)v=100;
+                    g_settings.volume=(unsigned)v;wili_video_set_volume((unsigned)v);native_ui_volume((unsigned)v);
+                }else{
+                    int v=(int)g_settings.danmaku_density+dir;if(v<0)v=6;if(v>6)v=0;
+                    g_settings.danmaku_density=(unsigned)v;danmaku_density(v);native_ui_dm_density(v);ui_dirty=dm_dirty=1;
+                }
+                snprintf(settings_status,sizeof(settings_status),"左右键调整 · 叉键保存并返回");
+            }
+            if(pressed&(BTN_CROSS|BTN_CIRCLE|BTN_START)){
+                int rc=wili_settings_save(WILI_SETTINGS_PATH,&g_settings);
+                snprintf(ui_message,sizeof(ui_message),"%s",rc?"设置保存失败，请检查存储设备":"设置已保存");
+                settings_open=0;
+            }
+            continue;
+        }
+        if(relation_open){
+            if(pressed&(BTN_LEFT|BTN_RIGHT)){
+                int next=(pressed&BTN_RIGHT)?1:0;
+                if(next!=relation_followers){relation_followers=next;relation_sel=0;g_relation.page=1;g_relation.count=0;load_relation();}
+            }
+            if((pressed&BTN_UP) && relation_sel>0)relation_sel--;
+            if((pressed&BTN_DOWN) && relation_sel+1<g_relation.count)relation_sel++;
+            if((pressed&BTN_R2) && g_relation.has_more){unsigned p=(g_relation.page?g_relation.page:1)+1;memset(&g_relation,0,sizeof(g_relation));g_relation.page=p;relation_sel=0;load_relation();}
+            if((pressed&BTN_L2)){unsigned p=g_relation.page?g_relation.page:1;if(p>1){memset(&g_relation,0,sizeof(g_relation));g_relation.page=p-1;relation_sel=0;load_relation();}}
+            if(pressed&BTN_CIRCLE)relation_open=0;
+            continue;
+        }
+        if(favorite_confirm){
+            if(pressed&(BTN_LEFT|BTN_UP))favorite_choice=0;
+            if(pressed&(BTN_RIGHT|BTN_DOWN))favorite_choice=1;
+            if(pressed&BTN_CIRCLE)favorite_confirm=0;
+            if(pressed&BTN_CROSS){
+                if(favorite_choice && g_feed.item_count){
+                    int idx=g_focused_card<g_feed.item_count?g_focused_card:0;
+                    uint64_t aid=g_feed.items[idx].resource_id;
+                    if(!aid)snprintf(ui_message,sizeof(ui_message),"该视频缺少资源编号，无法删除");
+                    else if(request_kind || request_detached)snprintf(ui_message,sizeof(ui_message),"请等待当前操作完成");
+                    else{
+                        request_fav_media=g_feed.favorite_id;request_fav_aid=aid;
+                        snprintf(request_cookie,sizeof(request_cookie),"%s",g_qr.cookie);
+                        if(launch_request(7))snprintf(ui_message,sizeof(ui_message),"无法启动删除请求");
+                    }
+                }
+                favorite_confirm=0;
+            }
             continue;
         }
         if(action_confirm){
@@ -715,7 +855,7 @@ static void input(void)
         }
         if(pressed&BTN_START){ask_exit();return;}
         if(request_kind==6)continue;
-        if(request_kind==1){if(pressed&BTN_CIRCLE){__sync_lock_test_and_set(&request_cancel,1);snprintf(ui_message,sizeof(ui_message),"正在取消…");}continue;}
+        if(request_kind==1){if(pressed&BTN_CIRCLE){__sync_lock_test_and_set(&request_cancel,1);cancel_deadline=now_us()+3000000ULL;snprintf(ui_message,sizeof(ui_message),"正在取消…");}continue;}
         if(g_view==VIEW_FEED){
             if(pressed&(BTN_LEFT|BTN_L1))change_tab(-1);
             if(pressed&(BTN_RIGHT|BTN_R1))change_tab(1);
@@ -725,15 +865,22 @@ static void input(void)
                 if(!net_ok || g_feed.network_error){refresh_after_network=1;refresh_network_tab=g_feed.current_tab;reconnect_network();}else bili_feed_refresh(&g_feed);
                 g_focused_card=0;ui_message[0]=0;
             }
-            if(pressed&BTN_SELECT){wallpaper_poll(now_us(),1,text_log);}
-            if(pressed&BTN_R2){if(!bili_feed_next_page(&g_feed)){g_focused_card=0;if(ui_sound_ready)ui_sound_click();}}
+            if(pressed&BTN_R2){
+                if(g_feed.current_tab==FEED_TAB_USER){settings_open=1;settings_sel=0;settings_status[0]=0;}
+                else if(!bili_feed_next_page(&g_feed)){g_focused_card=0;if(ui_sound_ready)ui_sound_click();}
+            }
+            if((pressed&BTN_SQUARE) && g_feed.current_tab==FEED_TAB_FAVORITE && g_feed.favorite_id &&
+               g_feed.item_count && g_focused_card<g_feed.item_count && !g_feed.items[g_focused_card].is_folder){
+                favorite_confirm=1;favorite_choice=0;
+            }
             if((pressed&BTN_SQUARE) && g_feed.current_tab==FEED_TAB_SEARCH)open_search();
             if(pressed&BTN_CROSS){
                 if(g_feed.current_tab==FEED_TAB_USER && !g_qr.is_logged_in){if(net_ok)launch_request(2);else reconnect_network();}
+                else if(g_feed.current_tab==FEED_TAB_USER){relation_open=1;relation_sel=0;relation_followers=0;g_relation.page=1;g_relation.count=0;load_relation();}
                 else if(g_feed.current_tab==FEED_TAB_SEARCH && (!g_feed.item_count || g_tab_focus))open_search();
                 else if(g_feed.item_count && g_focused_card<g_feed.item_count){
                     if(g_feed.items[g_focused_card].is_folder){bili_feed_open_folder(&g_feed,g_focused_card);g_focused_card=0;g_tab_focus=0;}
-                    else start_playback(g_feed.items[g_focused_card].bvid,64);
+                    else start_playback(g_feed.items[g_focused_card].bvid,g_settings.default_qn);
                 }
             }
             if((pressed&BTN_SQUARE) && g_feed.current_tab==FEED_TAB_USER && g_qr.is_logged_in)launch_request(4);
@@ -741,6 +888,8 @@ static void input(void)
         }else{
             g_last_osd_action=now_us();
             if(detail_mode){detail_input(pressed);continue;}
+            if(pressed&BTN_L2){change_volume(-10);continue;}
+            if(pressed&BTN_R2){change_volume(10);continue;}
             if(pressed&BTN_SELECT){detail_mode=1;g_quality_menu_open=0;continue;}
             if(g_quality_menu_open){
                 if((pressed&BTN_UP) && g_quality_menu_sel>0)g_quality_menu_sel--;
@@ -765,16 +914,20 @@ static void cleanup_worker(void *arg)
 {
     (void)arg;
     __sync_lock_test_and_set(&cleanup_stage,1);
-    if(request_kind){u64 result;sysThreadJoin(request_thread,&result);request_kind=0;}
-    text_log("EXIT_STEP request_joined");
+    if(request_thread_live || request_detached){
+        u64 joined_at=now_us();
+        while(!__sync_add_and_fetch(&request_done,0) && now_us()-joined_at<3000000ULL)sysUsleep(1000);
+        if(__sync_add_and_fetch(&request_done,0)){u64 result;sysThreadJoin(request_thread,&result);text_log("EXIT_STEP request_joined");}
+        else text_log("EXIT_REQUEST_JOIN_TIMEOUT skip_join_continue_cleanup");
+        request_thread_live=0;request_detached=0;request_kind=0;
+    }else text_log("EXIT_STEP request_joined");
     __sync_lock_test_and_set(&cleanup_stage,2);bili_feed_shutdown(&g_feed);
     __sync_lock_test_and_set(&cleanup_stage,3);ui_image_shutdown();
     ui_image_end_session();
     text_log("EXIT_STEP background_joined");
     __sync_lock_test_and_set(&cleanup_stage,4);
-    if(gpu_fault || wili_video_stop_safe()){
-        text_log("CLEANUP_RETAINED live_decoder_or_worker process_teardown");goto finished;
-    }
+    if(gpu_fault || wili_video_stop_safe())
+        text_log("CLEANUP_VIDEO_STOP_INCOMPLETE continue_best_effort");
     wili_bili_session_close(wili_bili_play_session(),text_log);
     text_log("EXIT_STEP codecs_closed");
     bili_detail_shutdown();danmaku_shutdown();history_sync_shutdown(2000);text_log("EXIT_STEP detail_danmaku_history_joined");
@@ -788,7 +941,6 @@ static void cleanup_worker(void *arg)
     else free(ui_background);
     native_ui_release_player_cache();ui_font_shutdown();
     if(pad_ready)result_log("PAD_END",ioPadEnd());
-finished:
     __sync_lock_test_and_set(&cleanup_done,1);sysThreadExit(0);
 }
 int main(void)
@@ -801,6 +953,11 @@ int main(void)
     if(ui_font_init("/dev_hdd0/game/WILIPRB01/USRDIR/font.ttf")){text_log("FONT_INIT_FAILED");goto done;}
     ui_sound_ready=!ui_sound_start(text_log);
     if(!ui_sound_ready)text_log("UI_SOUND_UNAVAILABLE muted_navigation");
+    g_settings=wili_settings_load(WILI_SETTINGS_PATH);
+    g_current_qn=g_settings.default_qn;
+    wili_video_set_volume(g_settings.volume);native_ui_volume(g_settings.volume);
+    {char line[128];snprintf(line,sizeof(line),"SETTINGS_LOAD qn=%u volume=%u density=%u",
+        g_settings.default_qn,g_settings.volume,g_settings.danmaku_density);text_log(line);}
     const char *ca="/dev_hdd0/game/WILIPRB01/USRDIR/cacert.pem";
     wili_qr_login_init(&g_qr,ca,text_log);
     snprintf(g_feed.status_msg,sizeof(g_feed.status_msg),"正在初始化网络…");if(draw(now_us()))goto done;
@@ -808,7 +965,7 @@ int main(void)
     if(net_ok){
         if(bili_detail_init(ca,text_log))text_log("DETAIL_INIT_FAILED");
         if(danmaku_init(ca,text_log))text_log("DANMAKU_INIT_FAILED");
-        native_ui_dm_density(danmaku_get_density());
+        native_ui_dm_density(danmaku_get_density());g_settings.danmaku_density=danmaku_get_density();
             if(history_sync_init(ca,text_log))text_log("HISTORY_INIT_FAILED");
         if(bili_feed_init(&g_feed,g_qr.is_logged_in?g_qr.cookie:NULL,ca,text_log))text_log("FEED_INIT_FAILED");
         if(ui_image_init(ca,text_log))text_log("IMAGE_INIT_FAILED");
@@ -899,7 +1056,7 @@ done:
     int clean_rc=sysThreadCreate(&cleaner,cleanup_worker,NULL,1050,262144,THREAD_JOINABLE,"bibi-exit");
     if(!clean_rc){
         u64 begin=now_us();unsigned waits=0;
-        while(!__sync_add_and_fetch(&cleanup_done,0) && now_us()-begin<3000000 && waits++<3000){
+        while(!__sync_add_and_fetch(&cleanup_done,0) && now_us()-begin<6000000 && waits++<6000){
             if(callback_ready)sysUtilCheckCallback();
             if(!gpu_fault && now_us()-last_present_us>=16667 && repeat_display())gpu_fault=1;
             sysUsleep(1000);

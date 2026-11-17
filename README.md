@@ -1,10 +1,10 @@
-# bibilabu PS3 · 1.0.0
+# bibilabu PS3 · 1.0.1beta
 
 基于 PS3 的 Bilibili 原生客户端实验项目,主要由codex许愿式编程开发得到，ui模仿经典的xmb设计 ，背景由机器当前壁纸决定。
 
 ## 灵感与实现
 
-- 灵感来自 wiliwili，参考其部分 Bilibili 接口和数据格式，并复用字体等资源。
+- 参考公开的 Bilibili 接口约定与数据格式，复用开源字体等资源。
 - 播放页和信息流界面按 PS3 XMB 风格设计，面板使用透明玻璃效果。
 - PS3 硬件解码限制参考 Movian 的 VDEC 实现。CellVdec 拒绝竖屏 720p 参数后，提供 FFmpeg/AltiVec 软件解码实验路径。
 
@@ -31,7 +31,7 @@ python3 tools/bootstrap_software_avc.py --host
 python3 tools/build_platform_probe.py --bili-play --release
 ```
 
-正式构建生成 `dist/bibilabu-PS3-1.0.0-fw3.55.pkg`。包内声明的最低系统版本为 3.55；该设置理论只改变安装门槛，实机验证在4.93和4.89hen下正常。软件解码依赖来自 FFmpeg 7.1.1，下载脚本会校验 SHA-256。依赖和许可见 [UPSTREAM.json](UPSTREAM.json)。
+正式构建生成 `dist/bibilabu-PS3-1.0.1beta-fw3.55.pkg`。包内声明的最低系统版本为 3.55；该设置理论只改变安装门槛，实机验证在4.93和4.89hen下正常。软件解码依赖来自 FFmpeg 7.1.1，下载脚本会校验 SHA-256。依赖和许可见 [UPSTREAM.json](UPSTREAM.json)。
 
 ## 本地数据
 
